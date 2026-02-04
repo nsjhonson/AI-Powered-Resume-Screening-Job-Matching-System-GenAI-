@@ -1,6 +1,9 @@
 import streamlit as st
 import requests
 import json
+import time
+from streamlit_lottie import st_lottie
+import plotly.express as px
 
 # Configuration
 import os
@@ -13,23 +16,251 @@ st.set_page_config(
     layout="wide"
 )
 
-# Custom CSS for UI styling
+# --- AUTHENTICATION SYSTEM ---
+if 'logged_in' not in st.session_state:
+    st.session_state['logged_in'] = False
+if 'username' not in st.session_state:
+    st.session_state['username'] = None
+
+def load_lottieurl(url: str):
+    r = requests.get(url)
+    if r.status_code != 200:
+        return None
+    return r.json()
+
+# Load assets
+lottie_login = load_lottieurl("https://assets4.lottiefiles.com/packages/lf20_jcikwtux.json")
+lottie_success = load_lottieurl("https://assets9.lottiefiles.com/packages/lf20_5tkzkblw.json")
+
+def auth_flow():
+    st.markdown("""
+        <style>
+        /* Modern Gradient Background */
+        .stApp {
+            background: linear-gradient(135deg, #0F2027 0%, #203A43 50%, #2C5364 100%);
+            color: #FFFFFF;
+        }
+        
+        /* Glassmorphism Card */
+        div[data-testid="stForm"], div[data-baseweb="tab-panel"] {
+            background: rgba(255, 255, 255, 0.05);
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
+            border-radius: 20px;
+            padding: 30px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
+        }
+
+        /* Inputs */
+        .stTextInput input, .stSelectbox div[data-baseweb="select"] div {
+            background-color: rgba(255, 255, 255, 0.1) !important;
+            color: #FFFFFF !important;
+            border: 1px solid rgba(255, 255, 255, 0.2) !important;
+            border-radius: 10px !important;
+        }
+        
+        /* Tabs */
+        .stTabs [data-baseweb="tab-list"] {
+            gap: 10px;
+            background-color: transparent;
+        }
+        .stTabs [data-baseweb="tab"] {
+            background-color: rgba(255, 255, 255, 0.05);
+            border-radius: 10px; 
+            color: #FFFFFF;
+            padding: 10px 20px;
+        }
+        .stTabs [aria-selected="true"] {
+            background: linear-gradient(to right, #00d2ff, #3a7bd5) !important;
+            color: white !important;
+            font-weight: bold;
+        }
+        </style>
+    """, unsafe_allow_html=True)
+
+    c1, c2, c3 = st.columns([1, 2, 1])
+    with c2:
+        if lottie_login:
+            st_lottie(lottie_login, height=200, key="login_anim")
+        st.markdown("<h1 style='text-align: center;'>🔐 Recruiter Portal</h1>", unsafe_allow_html=True)
+        
+        tab_login, tab_register, tab_forgot = st.tabs(["Login", "Register", "Forgot Password"])
+        
+        with tab_login:
+            with st.form("login_form"):
+                username = st.text_input("Username")
+                password = st.text_input("Password", type="password")
+                submit = st.form_submit_button("Sign In", use_container_width=True)
+                
+                if submit:
+                    try:
+                        res = requests.post(f"{BACKEND_URL}/auth/login", json={"username": username, "password": password})
+                        if res.status_code == 200:
+                            st.session_state['logged_in'] = True
+                            st.session_state['username'] = username
+                            st.success("Login Successful!")
+                            time.sleep(1)
+                            st.rerun()
+                        else:
+                            st.error(f"Error: {res.json().get('detail')}")
+                    except Exception as e:
+                        st.error(f"Connection Error: {e}")
+
+        with tab_register:
+            with st.form("register_form"):
+                new_user = st.text_input("Choose Username")
+                new_pass = st.text_input("Choose Password", type="password")
+                sec_q = st.selectbox("Security Question", [
+                    "What is your pet's name?",
+                    "What city were you born in?",
+                    "What is your mother's maiden name?"
+                ])
+                sec_a = st.text_input("Security Answer")
+                reg_submit = st.form_submit_button("Create Account", use_container_width=True)
+                
+                if reg_submit:
+                    if new_user and new_pass and sec_a:
+                        try:
+                            payload = {
+                                "username": new_user,
+                                "password": new_pass,
+                                "security_question": sec_q,
+                                "security_answer": sec_a
+                            }
+                            res = requests.post(f"{BACKEND_URL}/auth/register", json=payload)
+                            if res.status_code == 200:
+                                st.success("Account Created! Please Login.")
+                            else:
+                                st.error(f"Error: {res.json().get('detail')}")
+                        except Exception as e:
+                            st.error(f"Connection Error: {e}")
+                    else:
+                        st.warning("Please fill all fields.")
+
+        with tab_forgot:
+            st.write("Reset Password Step 1")
+            f_user = st.text_input("Enter Username", key="f_user")
+            if st.button("Check User"):
+                try:
+                    res = requests.post(f"{BACKEND_URL}/auth/get-security-question", json={"username": f_user})
+                    if res.status_code == 200:
+                        st.session_state['reset_user'] = f_user
+                        st.session_state['reset_q'] = res.json()['security_question']
+                    else:
+                        st.error("User not found")
+                except:
+                    st.error("Connection error")
+            
+            if 'reset_user' in st.session_state:
+                st.info(f"Question: {st.session_state['reset_q']}")
+                with st.form("reset_form"):
+                    ans = st.text_input("Answer")
+                    new_p = st.text_input("New Password", type="password")
+                    reset_submit = st.form_submit_button("Reset Password")
+                    
+                    if reset_submit:
+                        try:
+                            payload = {"username": st.session_state['reset_user'], "security_answer": ans, "new_password": new_p}
+                            res = requests.post(f"{BACKEND_URL}/auth/reset-password", json=payload)
+                            if res.status_code == 200:
+                                st.success("Password Reset! Please Login.")
+                                del st.session_state['reset_user']
+                            else:
+                                st.error(res.json().get('detail'))
+                        except:
+                            st.error("Error resetting password")
+
+if not st.session_state['logged_in']:
+    auth_flow()
+    st.stop()
+    
+# Clean Logout Button in Sidebar
+with st.sidebar:
+    st.write(f"👤 User: **{st.session_state.get('username', 'Admin')}**")
+    if st.button("Log Out"):
+        st.session_state['logged_in'] = False
+        st.rerun()
+
+# --- APP CONTENT STARTS HERE ---
+
+# Fetch Data from DB
+def fetch_all_candidates():
+    try:
+        response = requests.get(f"{BACKEND_URL}/candidates")
+        if response.status_code == 200:
+            return response.json()
+    except:
+        pass
+    return []
+
+# Initialize session state with DB data if empty
+if 'batch_data' not in st.session_state or not st.session_state['batch_data']:
+    db_data = fetch_all_candidates()
+    if db_data:
+        st.session_state['batch_data'] = db_data
+
+# Custom CSS for UI styling (Global)
 st.markdown("""
 <style>
+    /* Global Styles */
+    .stApp {
+        background: linear-gradient(135deg, #0F2027 0%, #203A43 50%, #2C5364 100%);
+    }
+    
+    /* Metrics Cards */
     .metric-card {
-        background-color: #ffffff;
+        background: rgba(255, 255, 255, 0.1);
+        backdrop-filter: blur(10px);
+        -webkit-backdrop-filter: blur(10px);
         padding: 20px;
-        border-radius: 10px;
-        border: 1px solid #dcdcdc;
+        border-radius: 15px;
+        border: 1px solid rgba(255, 255, 255, 0.1);
         text-align: center;
-        color: #333333; /* Force text to be dark on white background */
+        color: #FFFFFF;
+        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        transition: transform 0.3s ease;
+    }
+    .metric-card:hover {
+        transform: translateY(-5px);
     }
     .metric-card h3 {
-        color: #333333 !important;
+        color: #00d2ff !important;
         margin: 0;
         padding: 0;
         font-size: 1.2rem;
+        font-weight: 600;
     }
+    .metric-card p {
+        color: #E0E0E0 !important;
+        margin-top: 5px;
+    }
+
+    /* Tabs */
+    .stTabs [data-baseweb="tab-list"] {
+        gap: 10px;
+        background-color: transparent;
+    }
+    .stTabs [data-baseweb="tab"] {
+        background-color: rgba(255, 255, 255, 0.05);
+        border-radius: 10px;
+        color: #FFFFFF;
+        padding: 10px 20px;
+        border: 1px solid rgba(255, 255, 255, 0.1);
+    }
+    .stTabs [aria-selected="true"] {
+        background: linear-gradient(to right, #00d2ff, #3a7bd5) !important;
+        color: white !important;
+        font-weight: bold;
+    }
+
+    /* Dataframes */
+    [data-testid="stDataFrame"] {
+        background: rgba(255, 255, 255, 0.05);
+        border-radius: 10px;
+        padding: 10px;
+    }
+
     .high-score { color: #28a745; font-weight: bold; }
     .medium-score { color: #ffc107; font-weight: bold; }
     .low-score { color: #dc3545; font-weight: bold; }
@@ -42,21 +273,33 @@ st.markdown("### Intelligent Job Matching using GenAI & RAG")
 # Sidebar for Resume Upload
 with st.sidebar:
     st.header("Step 1: Upload Details")
-    uploaded_file = st.file_uploader("Upload Resume (PDF)", type=["pdf"])
+    uploaded_file = st.file_uploader("Upload Resume (PDF or ZIP)", type=["pdf", "zip"])
     
     if uploaded_file is not None:
-        if st.button("Process Resume"):
-            with st.spinner("Parsing and vectorizing resume..."):
-                files = {"file": (uploaded_file.name, uploaded_file, "application/pdf")}
+        if st.button("Process Resume(s)"):
+            with st.spinner("Processing..."):
                 try:
-                    response = requests.post(f"{BACKEND_URL}/upload-resume", files=files)
-                    if response.status_code == 200:
-                        st.success("Resume uploaded successfully!")
-                        data = response.json()
-                        st.session_state['filename'] = data['filename']
-                        st.session_state['extracted_data'] = data.get('extracted_data', {})
+                    if uploaded_file.name.endswith(".zip"):
+                        # Batch Upload
+                        files = {"file": (uploaded_file.name, uploaded_file, "application/zip")}
+                        response = requests.post(f"{BACKEND_URL}/upload-zip", files=files)
+                        if response.status_code == 200:
+                            st.success("Batch processing complete!")
+                            st.session_state['batch_data'] = response.json()
+                            st.info(f"Processed {len(st.session_state['batch_data'])} resumes.")
+                        else:
+                            st.error(f"Error processing batch: {response.text}")
                     else:
-                        st.error(f"Error uploading resume: {response.text}")
+                        # Single PDF Upload
+                        files = {"file": (uploaded_file.name, uploaded_file, "application/pdf")}
+                        response = requests.post(f"{BACKEND_URL}/upload-resume", files=files)
+                        if response.status_code == 200:
+                            st.success("Resume uploaded successfully!")
+                            data = response.json()
+                            st.session_state['filename'] = data['filename']
+                            st.session_state['extracted_data'] = data.get('extracted_data', {})
+                        else:
+                            st.error(f"Error uploading resume: {response.text}")
                 except Exception as e:
                     st.error(f"Connection error: {e}")
 
@@ -75,7 +318,74 @@ with st.sidebar:
 st.header("Step 2: Job Matching")
 
 # Tabs for Single vs Multi Job Mode
-tab1, tab2 = st.tabs(["Single Job Match", "Multi-Job Comparison"])
+# Tabs for Single vs Multi Job Mode
+tab1, tab2, tab3 = st.tabs(["Single Job Match", "Multi-Job Comparison", "Analytics Dashboard"])
+
+# --- ANALYTICS TAB ---
+with tab3:
+    st.header("📊 Talent Pool Analytics (Persistent Database)")
+    if 'batch_data' not in st.session_state or not st.session_state['batch_data']:
+        st.info("No candidates found in the database. Upload resumes to build your talent pool.")
+        # Try fetching again
+        if st.button("Refresh Results"):
+            st.session_state['batch_data'] = fetch_all_candidates()
+            st.rerun()
+    else:
+        batch_data = st.session_state['batch_data']
+        if not batch_data:
+            st.warning("No valid data found in the uploaded batch.")
+        else:
+            # 1. Total Candidates
+            st.metric("Total Candidates Processed", len(batch_data))
+            
+            # Prepare Dataframes
+            import pandas as pd
+            all_skills = []
+            experiences = []
+            
+            for item in batch_data:
+                data = item.get('extracted_data', {})
+                if data:
+                    # Flatten skills
+                    all_skills.extend(data.get('skills', []))
+                    experiences.append(data.get('experience_years', 0))
+            
+            # 2. Top Skills Interactive Chart
+            if all_skills:
+                st.subheader("Top Skills Found")
+                skill_counts = pd.Series(all_skills).value_counts().head(10).reset_index()
+                skill_counts.columns = ['Skill', 'Count']
+                
+                fig = px.bar(skill_counts, x='Skill', y='Count', color='Count',
+                             color_continuous_scale='Viridis', title="Most Common Candidate Skills")
+                fig.update_layout(paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", font=dict(color="white"))
+                st.plotly_chart(fig, use_container_width=True)
+            
+            # 3. Experience Distribution Area Chart
+            if experiences:
+                st.subheader("Experience Level Distribution")
+                exp_df = pd.DataFrame(experiences, columns=["Years of Experience"])
+                
+                fig2 = px.histogram(exp_df, x="Years of Experience", nbins=10, 
+                                    template="plotly_dark", title="Experience Distribution")
+                fig2.update_traces(marker_color='#00d2ff')
+                fig2.update_layout(paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", font=dict(color="white"))
+                st.plotly_chart(fig2, use_container_width=True)
+                
+            st.divider()
+            
+            # 4. Data Table
+            st.subheader("Candidate Overview")
+            overview_data = []
+            for item in batch_data:
+                d = item.get('extracted_data', {})
+                overview_data.append({
+                    "Name": d.get('name', 'Unknown'),
+                    "Experience": d.get('experience_years', 0),
+                    "Skills (Count)": len(d.get('skills', [])),
+                    "Filename": item.get('filename')
+                })
+            st.dataframe(pd.DataFrame(overview_data), use_container_width=True)
 
 # --- SINGLE JOB MODE ---
 with tab1:
@@ -233,6 +543,51 @@ with tab1:
                         except Exception as e:
                             st.error(f"Error generating PDF: {e}")
 
+                        # --- Step 3: Interview Question Generator ---
+                        st.subheader("Step 3: Interview Preparation")
+                        if st.button("Generate Interview Questions", type="secondary"):
+                            with st.spinner("Generating targeted questions..."):
+                                try:
+                                    q_payload = {"resume_data": data, "job_description": job_description}
+                                    q_response = requests.post(f"{BACKEND_URL}/generate-questions", json=q_payload)
+                                    if q_response.status_code == 200:
+                                        questions = q_response.json().get("questions", [])
+                                        st.success("Questions Generated!")
+                                        for i, q in enumerate(questions, 1):
+                                            st.markdown(f"**Q{i}.** {q}")
+                                    else:
+                                        st.error(f"Error: {q_response.text}")
+                                except Exception as e:
+                                    st.error(f"Connection error: {e}")
+                        
+                        # --- Step 4: Salary Estimation ---
+                        st.subheader("Step 4: Salary Insights (Beta)")
+                        if st.button("Estimate Market Salary", type="secondary"):
+                            with st.spinner("Analyzing market rates..."):
+                                try:
+                                    s_payload = {"resume_data": data, "job_description": job_description}
+                                    s_response = requests.post(f"{BACKEND_URL}/estimate-salary", json=s_payload)
+                                    if s_response.status_code == 200:
+                                        salary_data = s_response.json()
+                                        st.info(f"**Estimated Range:** {salary_data.get('salary_range', 'N/A')}")
+                                        st.caption(f"Reasoning: {salary_data.get('reasoning', 'N/A')}")
+                                    else:
+                                        st.error(f"Error: {s_response.text}")
+                                except Exception as e:
+                                    st.error(f"Connection error: {e}")
+                        
+                        # --- Step 5: Email Automation ---
+                        st.subheader("Step 5: Action")
+                        
+                        # Prepare email content
+                        candidate_name = data.get('name', 'Candidate')
+                        subject = f"Interview Invitation: {candidate_name} for Job Role"
+                        body = f"Hi {candidate_name},%0D%0A%0D%0AWe reviewed your profile and were impressed by your skills. Your match score is {match.get('score')}%25!%0D%0A%0D%0AWe would like to invite you for an interview.%0D%0A%0D%0ARegards,%0D%0AHiring Team"
+                        
+                        mailto_link = f"mailto:?subject={subject}&body={body}"
+                        
+                        st.link_button("📧 Send Interview Invite", mailto_link, type="primary")
+
                     else:
                         st.warning("No matches found.")
                 else:
@@ -297,6 +652,15 @@ with tab2:
                     for r in results_list
                 ])
                 st.dataframe(df, use_container_width=True, hide_index=True)
+                
+                # CSV Export
+                csv = df.to_csv(index=False).encode('utf-8')
+                st.download_button(
+                    label="📥 Download Results as CSV",
+                    data=csv,
+                    file_name='job_comparison_results.csv',
+                    mime='text/csv',
+                )
                 
                 # Best Match Highlight
                 best = results_list[0]

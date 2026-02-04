@@ -82,6 +82,7 @@ class ScoringService:
                 ("user", "JOB DESCRIPTION:\n{job_description}\n\nCANDIDATE PROFILE:\n{candidate_summary}")
             ])
             
+            
             chain = prompt | self.structured_llm
             result = chain.invoke({"job_description": job_description, "candidate_summary": candidate_summary})
             
@@ -90,5 +91,70 @@ class ScoringService:
             logger.error(f"Error evaluating candidate: {e}")
             # On 429 or other errors, use fallback
             return local_score()
+
+    def generate_interview_questions(self, resume_data: dict, job_description: str) -> dict:
+        """
+        Generates 5 technical and behavioral interview questions.
+        """
+        if not self.llm:
+            return {"questions": ["Unable to generate questions (LLM Unavailable)."]}
+
+        try:
+            candidate_summary = f"""
+            Name: {resume_data.get('name', 'Unknown')}
+            Skills: {', '.join(resume_data.get('skills', []))}
+            Experience: {resume_data.get('experience_years', 0)} years
+            """
+            
+            prompt = ChatPromptTemplate.from_messages([
+                ("system", "You are a senior technical interviewer. Generate 5 specific interview questions for this candidate based on the job description and their profile. Focus on their missing skills or gaps. Return the output as a JSON list of strings under the key 'questions'."),
+                ("user", "JOB DESCRIPTION:\n{job_description}\n\nCANDIDATE PROFILE:\n{candidate_summary}")
+            ])
+            
+            # Use basic LLM for free text or unstructured, but let's try structured if we define a schema
+            # For simplicity, let's just ask for JSON text and parse it manually or assume standard Invocation if we used structured_output.
+            
+            # Let's use a new simple schema for questions
+            class QuestionList(BaseModel):
+                questions: List[str] = Field(description="List of 5 interview questions")
+                
+            question_llm = self.llm.with_structured_output(QuestionList)
+            chain = prompt | question_llm
+            result = chain.invoke({"job_description": job_description, "candidate_summary": candidate_summary})
+            
+            return {"questions": result.questions}
+        except Exception as e:
+            logger.error(f"Error generating questions: {e}")
+            return {"questions": ["Error generating questions. Please try again."]}
+
+    def estimate_salary(self, resume_data: dict, job_description: str) -> dict:
+        """
+        Estimates a market salary range based on the candidate's profile and JD.
+        """
+        if not self.llm:
+            return {"salary_range": "Unknown", "reasoning": "LLM Unavailable"}
+        
+        try:
+            prompt = ChatPromptTemplate.from_messages([
+                ("system", "You are an expert compensation analyst. Estimate a competitive annual salary range (in USD) for this candidate applied to this job role. Be realistic based on experience years and skills. Return JSON with keys 'salary_range' (e.g. '$80,000 - $100,000') and 'reasoning' (1 sentence)."),
+                ("user", "JOB DESCRIPTION SUMMARY:\n{job_description}\n\nCANDIDATE EXPERIENCE:\n{experience} years, Skills: {skills}")
+            ])
+            
+            experience = resume_data.get('experience_years', 0)
+            skills = ', '.join(resume_data.get('skills', [])[:10]) # limit skills for context window
+            
+            # Simple schema
+            class SalaryEstimate(BaseModel):
+                salary_range: str = Field(description="Estimated salary range")
+                reasoning: str = Field(description="Why this range?")
+                
+            salary_llm = self.llm.with_structured_output(SalaryEstimate)
+            chain = prompt | salary_llm
+            result = chain.invoke({"job_description": job_description[:1000], "experience": experience, "skills": skills})
+            
+            return {"salary_range": result.salary_range, "reasoning": result.reasoning}
+        except Exception as e:
+            logger.error(f"Error estimating salary: {e}")
+            return {"salary_range": "N/A", "reasoning": "Could not estimate."}
 
 scoring_service = ScoringService()
